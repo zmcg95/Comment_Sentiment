@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from textblob import TextBlob
 import numpy as np
 
-# -------------------------------
+# --------------------------------
 # STREAMLIT LAYOUT
 # ------------------------------
 st.set_page_config(page_title="YouTube Comment Sentiment Analyzer", layout="wide")
