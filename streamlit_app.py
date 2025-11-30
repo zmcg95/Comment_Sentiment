@@ -31,7 +31,7 @@ if st.button("Fetch & Analyze Comments"):
     video_id = match.group(1)
 
     # ---------------------------------------------------------
-    # FETCH VIDEO METADATA (Title, Views, Thumbnail)
+    # FETCH VIDEO METADATA (Title, Views, Likes, Comment Count)
     # ---------------------------------------------------------
     video_meta_url = "https://www.googleapis.com/youtube/v3/videos"
     video_meta_params = {
@@ -48,15 +48,37 @@ if st.button("Fetch & Analyze Comments"):
         stats = video_meta["items"][0]["statistics"]
 
         title = snippet.get("title", "Unknown Title")
-        views = stats.get("viewCount", "N/A")
+        views = int(stats.get("viewCount", 0))
+        likes = int(stats.get("likeCount", 0))
+        comment_count = int(stats.get("commentCount", 0))
+
+        engagement_rate = ((likes + comment_count) / max(views, 1)) * 100
+        custom_score = round((engagement_rate * 0.6) + (likes * 0.002), 2)
 
         thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
 
-        # Display video info
+        # ---------------------------------------------------------
+        # VIDEO HEADER
+        # ---------------------------------------------------------
         st.subheader("🎬 Video Information")
-        st.image(thumbnail_url, width=450)
-        st.write(f"**📌 Title:** {title}")
-        st.write(f"**👁️ Total Views:** {int(views):,}")
+        col_vid, col_meta = st.columns([1, 2])
+
+        with col_vid:
+            st.image(thumbnail_url, width=420)
+
+        with col_meta:
+            st.write(f"### {title}")
+
+            # ------------- METRIC CARDS -------------
+            m1, m2, m3 = st.columns(3)
+            m1.metric("👁️ Views", f"{views:,}")
+            m2.metric("👍 Likes", f"{likes:,}")
+            m3.metric("💬 Comments", f"{comment_count:,}")
+
+            m4, m5 = st.columns(2)
+            m4.metric("📈 Engagement Rate", f"{engagement_rate:.2f}%")
+            m5.metric("🔥 Custom Score", custom_score)
+
     else:
         st.warning("Could not fetch video metadata.")
 
@@ -110,7 +132,7 @@ if st.button("Fetch & Analyze Comments"):
     })
 
     st.subheader("🧾 Full Comment Dataset")
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
     # ---------------------------------------------------------
     # VISUALIZATIONS
@@ -186,3 +208,4 @@ if st.button("Fetch & Analyze Comments"):
         file_name="youtube_sentiment_results.csv",
         mime="text/csv"
     )
+
