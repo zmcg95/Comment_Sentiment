@@ -2,16 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import re
 from textblob import TextBlob
 import matplotlib.pyplot as plt
-import re
 from youtube_transcript_api import YouTubeTranscriptApi
 
 # ---------------------------------------------------------
 # PAGE SETTINGS
 # ---------------------------------------------------------
-st.set_page_config(page_title="YouTube Comment Sentiment Analyzer", layout="wide")
-st.title("📊 YouTube Comment Sentiment Analyzer")
+st.set_page_config(page_title="YouTube Sentiment Analyzer", layout="wide")
+st.title("📊 YouTube Comment & Transcript Sentiment Analyzer")
+
 
 # ---------------------------------------------------------
 # INPUTS
@@ -19,9 +20,9 @@ st.title("📊 YouTube Comment Sentiment Analyzer")
 api_key = st.text_input("🔑 Enter Your YouTube API Key", type="password")
 video_url = st.text_input("🎥 Enter YouTube Video URL")
 
-if st.button("Fetch & Analyze Video"):
+if st.button("Fetch & Analyze"):
     if not api_key or not video_url:
-        st.error("Please provide BOTH an API key and a YouTube video URL.")
+        st.error("Please provide BOTH API key and YouTube URL.")
         st.stop()
 
     # Extract video ID
@@ -29,6 +30,7 @@ if st.button("Fetch & Analyze Video"):
     if not match:
         st.error("Invalid YouTube URL format.")
         st.stop()
+
     video_id = match.group(1)
 
     # ---------------------------------------------------------
@@ -41,11 +43,10 @@ if st.button("Fetch & Analyze Video"):
         "key": api_key
     }
 
-    video_meta_response = requests.get(video_meta_url, params=video_meta_params)
-    video_meta = video_meta_response.json()
+    video_meta = requests.get(video_meta_url, params=video_meta_params).json()
 
     if "items" not in video_meta or len(video_meta["items"]) == 0:
-        st.error("Could not fetch video metadata.")
+        st.error("Failed to fetch video metadata.")
         st.stop()
 
     snippet = video_meta["items"][0]["snippet"]
@@ -53,9 +54,12 @@ if st.button("Fetch & Analyze Video"):
 
     title = snippet.get("title", "Unknown Title")
     views = int(stats.get("viewCount", 0))
-    likes = int(stats.get("likeCount", 0))
-    comments_count = int(stats.get("commentCount", 0))
-    channel_id = snippet.get("channelId")
+    likes = int(stats.get("likeCount", 0)) if "likeCount" in stats else 0
+    comments_count = int(stats.get("commentCount", 0)) if "commentCount" in stats else 0
+    channel_id = snippet["channelId"]
+    channel_title = snippet["channelTitle"]
+
+    engagement_rate = round(((likes + comments_count) / views) * 100, 2) if views > 0 else 0
 
     thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
 
@@ -75,69 +79,18 @@ if st.button("Fetch & Analyze Video"):
     # ---------------------------------------------------------
     # KPI CARDS
     # ---------------------------------------------------------
-    st.subheader("📌 Video KPIs")
+    colA, colB, colC, colD, colE = st.columns(5)
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Views", f"{views:,}")
-    k2.metric("Likes", f"{likes:,}")
-    k3.metric("Comments", f"{comments_count:,}")
-    k4.metric("Subscribers", f"{subs:,}")
+    colA.metric("📺 Views", f"{views:,}")
+    colB.metric("👍 Likes", f"{likes:,}")
+    colC.metric("💬 Comments", f"{comments_count:,}")
+    colD.metric("📊 Engagement Rate", f"{engagement_rate}%")
+    colE.metric("👤 Subscribers", f"{subs:,}")
 
-    # Engagement Rate (simple)
-    er = (likes + comments_count) / max(views, 1)
-    k5.metric("Engagement Rate", f"{er:.2%}")
-
-    # Display video info
-    st.subheader("🎬 Video Information")
+    # Display thumbnail + title
     st.image(thumbnail_url, width=450)
-    st.write(f"**📌 Title:** {title}")
-
-    # ---------------------------------------------------------
-    # FETCH 10 MOST RECENT VIDEOS FROM CHANNEL
-    # ---------------------------------------------------------
-    search_url = "https://www.googleapis.com/youtube/v3/search"
-    search_params = {
-        "part": "snippet",
-        "channelId": channel_id,
-        "maxResults": 10,
-        "order": "date",
-        "key": api_key
-    }
-
-    recent = requests.get(search_url, params=search_params).json()
-    video_ids_recent = [i["id"].get("videoId") for i in recent["items"] if i["id"].get("videoId")]
-
-    # Fetch stats for these videos
-    stats_url = "https://www.googleapis.com/youtube/v3/videos"
-    stats_params = {
-        "part": "statistics,snippet",
-        "id": ",".join(video_ids_recent),
-        "key": api_key
-    }
-
-    recent_stats = requests.get(stats_url, params=stats_params).json()
-
-    recent_titles = []
-    recent_views = []
-
-    for v in recent_stats["items"]:
-        recent_titles.append(v["snippet"]["title"])
-        recent_views.append(int(v["statistics"].get("viewCount", 0)))
-
-    # ---------------------------------------------------------
-    # RECENT VIDEOS VIEW COMPARISON CHART
-    # ---------------------------------------------------------
-    st.subheader("📈 Recent Video Performance (View Comparison)")
-
-    fig_cmp, ax_cmp = plt.subplots(figsize=(10, 4))
-    ax_cmp.plot(recent_titles, recent_views, marker='o')
-    ax_cmp.axhline(views, linestyle="--", linewidth=2)
-
-    ax_cmp.set_title("View Counts of Last 10 Videos")
-    ax_cmp.set_ylabel("Views")
-    ax_cmp.set_xticklabels(recent_titles, rotation=45, ha="right")
-
-    st.pyplot(fig_cmp)
+    st.subheader(f"🎬 {title}")
+    st.write(f"📺 Channel: **{channel_title}**")
 
     # ---------------------------------------------------------
     # FETCH COMMENTS
@@ -151,17 +104,12 @@ if st.button("Fetch & Analyze Video"):
         "textFormat": "plainText"
     }
 
-    response = requests.get(comments_url, params=params)
-    data = response.json()
+    data = requests.get(comments_url, params=params).json()
 
-    comments = [
-        item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-        for item in data.get("items", [])
-    ]
-
-    if not comments:
-        st.warning("No comments found.")
-        st.stop()
+    comments = []
+    for item in data.get("items", []):
+        comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+        comments.append(comment)
 
     st.success(f"Fetched {len(comments)} comments!")
 
@@ -179,7 +127,6 @@ if st.button("Fetch & Analyze Video"):
             sentiment_labels.append("Positive")
         elif polarity < -0.05:
             sentiment_labels.append("Negative")
-            sentiment_labels.append("Negative")
         else:
             sentiment_labels.append("Neutral")
 
@@ -189,92 +136,112 @@ if st.button("Fetch & Analyze Video"):
         "sentiment": sentiment_labels
     })
 
-    st.subheader("🧾 Full Comment Dataset")
-    st.dataframe(df)
-
     # ---------------------------------------------------------
-    # VISUALIZATIONS
+    # VISUALS: SENTIMENT + POLARITY
     # ---------------------------------------------------------
-    st.subheader("📊 Comment Sentiment Visualizations")
-
+    st.subheader("📈 Comment Sentiment Visuals")
     col1, col2 = st.columns(2)
 
-    # SENTIMENT COUNTS
+    # ---- Sentiment bar chart ----
     with col1:
         fig1, ax1 = plt.subplots()
-        sentiment_counts = df["sentiment"].value_counts()
+        counts = df["sentiment"].value_counts()
         colors = {"Positive": "green", "Neutral": "gray", "Negative": "red"}
-        sentiment_counts.plot(kind="bar", color=[colors[s] for s in sentiment_counts.index], ax=ax1)
+
+        counts.plot(kind="bar", ax=ax1, color=[colors[x] for x in counts.index])
         ax1.set_title("Sentiment Distribution")
-        ax1.tick_params(axis='x', rotation=0)
         st.pyplot(fig1)
 
-    # POLARITY HISTOGRAM
+    # ---- Polarity histogram (red → green) ----
     with col2:
         fig2, ax2 = plt.subplots()
-        vals = df["polarity"].dropna().values
-        counts, bin_edges = np.histogram(vals, bins=20, range=(-1, 1))
+        vals = df["polarity"].values
 
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        norm_centers = (bin_centers + 1) / 2
+        bins = 20
+        counts, edges = np.histogram(vals, bins=bins, range=(-1, 1))
+        centers = (edges[:-1] + edges[1:]) / 2
+        norm = (centers + 1) / 2
         cmap = plt.get_cmap("RdYlGn")
-        bar_colors = [cmap(n) for n in norm_centers]
+        colors = [cmap(n) for n in norm]
 
-        ax2.bar(bin_centers, counts, width=(bin_edges[1] - bin_edges[0]), color=bar_colors, edgecolor="black")
+        ax2.bar(centers, counts, width=0.09, color=colors, edgecolor="black")
         ax2.set_title("Polarity Distribution")
         st.pyplot(fig2)
 
     # ---------------------------------------------------------
-    # TOP 10 POSITIVE & NEGATIVE
+    # TOP 10 POSITIVE / NEGATIVE (TABLES)
     # ---------------------------------------------------------
     st.subheader("🏆 Top Comments")
+
+    top_pos = df.sort_values("polarity", ascending=False).head(10).reset_index(drop=True)
+    top_neg = df.sort_values("polarity", ascending=True).head(10).reset_index(drop=True)
 
     col3, col4 = st.columns(2)
 
     with col3:
-        st.write("### 🌟 Top 10 Most Positive Comments")
-        st.table(df.sort_values(by="polarity", ascending=False).head(10)[["comment", "polarity"]])
+        st.write("### 🌟 Top 10 Positive")
+        st.table(top_pos)
 
     with col4:
-        st.write("### 💀 Top 10 Most Negative Comments")
-        st.table(df.sort_values(by="polarity", ascending=True).head(10)[["comment", "polarity"]])
+        st.write("### 💀 Top 10 Negative")
+        st.table(top_neg)
 
     # ---------------------------------------------------------
-    # TRANSCRIPT SENTIMENT TIMELINE
+    # LAST 10 VIDEOS (VIEWS CHART)
     # ---------------------------------------------------------
-    st.subheader("🎬 Sentiment Throughout the Video (Transcript)")
+    st.subheader("📊 Recent Channel Video Performance")
+
+    uploads_url = "https://www.googleapis.com/youtube/v3/search"
+    uploads_params = {
+        "part": "snippet",
+        "channelId": channel_id,
+        "maxResults": 10,
+        "order": "date",
+        "key": api_key
+    }
+
+    recent = requests.get(uploads_url, params=uploads_params).json()
+
+    video_ids = [x["id"]["videoId"] for x in recent.get("items", []) if "videoId" in x["id"]]
+
+    vid_views = []
+    for vid in video_ids:
+        meta = requests.get(video_meta_url, params={"part": "statistics", "id": vid, "key": api_key}).json()
+        v = int(meta["items"][0]["statistics"]["viewCount"])
+        vid_views.append(v)
+
+    fig3, ax3 = plt.subplots()
+    ax3.plot(range(len(vid_views)), vid_views, marker="o", label="Recent Videos")
+    ax3.axhline(y=views, color="red", linestyle="--", label="Current Video")
+    ax3.set_title("Views of Last 10 Videos")
+    ax3.legend()
+    st.pyplot(fig3)
+
+    # ---------------------------------------------------------
+    # TRANSCRIPT SENTIMENT OVER TIME
+    # ---------------------------------------------------------
+    st.subheader("🕒 Transcript Sentiment Over Time")
 
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        times = [t["start"] for t in transcript]
+        texts = [t["text"] for t in transcript]
 
-        times = []
-        sentiments = []
+        transcript_polarity = [TextBlob(t).sentiment.polarity for t in texts]
 
-        for t in transcript:
-            times.append(t["start"] / 60)
-            sentiments.append(TextBlob(t["text"]).sentiment.polarity)
-
-        trans_df = pd.DataFrame({"time_min": times, "polarity": sentiments})
-
-        fig_t, ax_t = plt.subplots(figsize=(10, 4))
-        ax_t.plot(trans_df["time_min"], trans_df["polarity"], linewidth=2)
-        ax_t.axhline(0, color="black", linestyle="--")
-        ax_t.set_title("Sentiment Over Video Timeline")
-        ax_t.set_xlabel("Time (minutes)")
-        ax_t.set_ylabel("Sentiment Polarity (-1 to 1)")
-        st.pyplot(fig_t)
+        fig4, ax4 = plt.subplots(figsize=(10, 4))
+        ax4.plot(times, transcript_polarity, color="purple")
+        ax4.set_title("Sentiment Across Video Timeline")
+        ax4.set_xlabel("Time (seconds)")
+        ax4.set_ylabel("Polarity")
+        st.pyplot(fig4)
 
     except Exception as e:
-        st.warning(f"Transcript not available: {e}")
+        st.warning("No transcript available for this video.")
 
     # ---------------------------------------------------------
     # DOWNLOAD CSV
     # ---------------------------------------------------------
-    st.subheader("⬇️ Download Results")
+    st.subheader("⬇️ Download Comments CSV")
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="youtube_sentiment_results.csv",
-        mime="text/csv"
-    )
+    st.download_button("Download CSV", csv, "youtube_comments_sentiment.csv", "text/csv")
