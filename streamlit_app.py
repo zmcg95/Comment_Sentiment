@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from textblob import TextBlob
 from youtube_transcript_api import YouTubeTranscriptApi
-import re
+from urllib.parse import urlparse, parse_qs
 
 # ----------------------------
 # PAGE CONFIG
@@ -15,77 +15,74 @@ st.set_page_config(
 )
 
 st.title("🎬 YouTube Caption Sentiment Analyzer")
-st.write("Sentiment analysis using **ONLY YouTube captions** (no comments, no API key).")
+st.write("Sentiment analysis using **ONLY YouTube captions** (no comments).")
+
+# ----------------------------
+# HELPERS (YOUR WORKING LOGIC)
+# ----------------------------
+def get_video_id(url):
+    parsed = urlparse(url)
+
+    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
+        if "v" in parse_qs(parsed.query):
+            return parse_qs(parsed.query)["v"][0]
+
+    if parsed.hostname == "youtu.be":
+        return parsed.path[1:]
+
+    raise ValueError("Invalid YouTube URL")
+
+def get_captions(url):
+    video_id = get_video_id(url)
+    api = YouTubeTranscriptApi()
+
+    # This returns a FetchedTranscript object
+    transcript = api.fetch(video_id)
+
+    # Convert to list of dicts (time-aware)
+    data = []
+    for entry in transcript:
+        data.append({
+            "start": entry.start,
+            "duration": entry.duration,
+            "text": entry.text
+        })
+
+    return pd.DataFrame(data)
 
 # ----------------------------
 # INPUT
 # ----------------------------
 video_url = st.text_input("🔗 Enter YouTube Video URL")
 
-# ----------------------------
-# TRANSCRIPT FETCH LOGIC
-# ----------------------------
-def fetch_transcript(video_id):
-    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-
-    # 1️⃣ Manual English
-    try:
-        return transcript_list.find_manually_created_transcript(['en']).fetch()
-    except:
-        pass
-
-    # 2️⃣ Auto-generated English
-    try:
-        return transcript_list.find_generated_transcript(['en']).fetch()
-    except:
-        pass
-
-    # 3️⃣ Any language → translate to English
-    for transcript in transcript_list:
-        try:
-            return transcript.translate('en').fetch()
-        except:
-            continue
-
-    raise RuntimeError("Captions exist but could not be accessed.")
-
-# ----------------------------
-# MAIN ACTION
-# ----------------------------
 if st.button("Analyze Captions"):
 
     if not video_url:
         st.error("Please enter a YouTube video URL.")
         st.stop()
 
-    # Extract video ID
-    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", video_url)
-    if not match:
-        st.error("Invalid YouTube URL.")
-        st.stop()
-
-    video_id = match.group(1)
-
     # ----------------------------
     # FETCH CAPTIONS
     # ----------------------------
     try:
-        transcript = fetch_transcript(video_id)
-    except Exception:
-        st.error("Captions are not accessible for this video.")
+        df = get_captions(video_url)
+    except Exception as e:
+        st.error(f"Could not fetch captions: {e}")
+        st.stop()
+
+    if df.empty:
+        st.error("No captions found.")
         st.stop()
 
     # ----------------------------
-    # BUILD DATAFRAME
+    # PROCESS DATA
     # ----------------------------
-    df = pd.DataFrame(transcript)
-    df = df[["start", "duration", "text"]]
     df["time_min"] = df["start"] / 60
 
-    # ----------------------------
-    # SENTIMENT ANALYSIS
-    # ----------------------------
-    df["polarity"] = df["text"].apply(lambda x: TextBlob(x).sentiment.polarity)
+    # Sentiment
+    df["polarity"] = df["text"].apply(
+        lambda x: TextBlob(x).sentiment.polarity
+    )
 
     def label_sentiment(p):
         if p > 0.05:
@@ -97,10 +94,12 @@ if st.button("Analyze Captions"):
 
     df["sentiment"] = df["polarity"].apply(label_sentiment)
 
-    # Smoothed polarity
-    df["rolling_polarity"] = df["polarity"].rolling(
-        window=10, min_periods=1
-    ).mean()
+    # Rolling sentiment (smooth timeline)
+    df["rolling_polarity"] = (
+        df["polarity"]
+        .rolling(window=10, min_periods=1)
+        .mean()
+    )
 
     # ----------------------------
     # PREVIEW
@@ -111,23 +110,23 @@ if st.button("Analyze Captions"):
     # ----------------------------
     # VISUALS
     # ----------------------------
-    st.subheader("📈 Sentiment Over Time")
+    st.subheader("📈 Sentiment Over Video Timeline")
 
     col1, col2 = st.columns(2)
 
-    # Polarity timeline
+    # Polarity over time
     with col1:
         fig1, ax1 = plt.subplots(figsize=(8, 4))
         ax1.plot(df["time_min"], df["polarity"], alpha=0.4)
         ax1.plot(df["time_min"], df["rolling_polarity"], linewidth=2)
         ax1.axhline(0, linestyle="--")
 
-        ax1.set_title("Sentiment Polarity Timeline")
+        ax1.set_title("Caption Sentiment Timeline")
         ax1.set_xlabel("Time (minutes)")
-        ax1.set_ylabel("Polarity")
+        ax1.set_ylabel("Polarity (-1 to 1)")
         st.pyplot(fig1)
 
-    # Sentiment distribution
+    # Sentiment counts
     with col2:
         fig2, ax2 = plt.subplots(figsize=(6, 4))
         df["sentiment"].value_counts().plot(kind="bar", ax=ax2)
