@@ -165,9 +165,15 @@ if st.button("Analyze Video"):
     perc_neu = round((len(df) - pos_count - neg_count) / len(df) * 100, 1)
 
     # ----------------------------
-    # DISPLAY KPIs
+    # DISPLAY KPIs IN BOX
     # ----------------------------
     st.subheader("⚡ Video Sentiment KPIs")
+    st.markdown(
+        """
+        <div style="border:1px solid #ccc; padding:15px; border-radius:10px; background-color:#f9f9f9;">
+        """, unsafe_allow_html=True
+    )
+
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Volatility", volatility)
     k2.metric("Pos/Neg Ratio", pos_neg_ratio)
@@ -177,6 +183,8 @@ if st.button("Analyze Video"):
     k5.metric("% Positive", perc_pos)
     k6.metric("% Neutral", perc_neu)
     k7.metric("% Negative", perc_neg)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ----------------------------
     # TABLE PREVIEW
