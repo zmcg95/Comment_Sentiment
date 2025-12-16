@@ -17,8 +17,8 @@ st.set_page_config(
 st.title("🎬 YouTube Caption Sentiment Analyzer")
 st.write(
     "Sentiment analysis using **ONLY YouTube captions**.\n\n"
-    "• Color-coded sentiment\n"
-    "• Context-aware caption grouping\n"
+    "• Captions merged for better context (2× original size)\n"
+    "• Color-coded sentiment visuals\n"
     "• No comments, no API keys"
 )
 
@@ -53,34 +53,17 @@ def get_raw_captions(url):
     return pd.DataFrame(rows)
 
 # ----------------------------
-# CONTEXT MERGING
+# MERGE CAPTIONS (2× SIZE)
 # ----------------------------
-def merge_captions(df, window_seconds=10):
+def merge_captions_by_count(df, group_size=2):
     merged = []
-    buffer_text = []
-    buffer_start = None
-    elapsed = 0
 
-    for _, row in df.iterrows():
-        if buffer_start is None:
-            buffer_start = row["start"]
+    for i in range(0, len(df), group_size):
+        chunk = df.iloc[i:i + group_size]
 
-        buffer_text.append(row["text"])
-        elapsed += row["duration"]
-
-        if elapsed >= window_seconds:
-            merged.append({
-                "start": buffer_start,
-                "text": " ".join(buffer_text)
-            })
-            buffer_text = []
-            buffer_start = None
-            elapsed = 0
-
-    if buffer_text:
         merged.append({
-            "start": buffer_start,
-            "text": " ".join(buffer_text)
+            "start": chunk.iloc[0]["start"],
+            "text": " ".join(chunk["text"].tolist())
         })
 
     return pd.DataFrame(merged)
@@ -89,14 +72,6 @@ def merge_captions(df, window_seconds=10):
 # INPUT
 # ----------------------------
 video_url = st.text_input("🔗 Enter YouTube Video URL")
-
-context_window = st.slider(
-    "🧠 Context window (seconds per sentiment block)",
-    min_value=5,
-    max_value=20,
-    value=10,
-    step=1
-)
 
 if st.button("Analyze Captions"):
 
@@ -109,7 +84,7 @@ if st.button("Analyze Captions"):
     # ----------------------------
     try:
         raw_df = get_raw_captions(video_url)
-        df = merge_captions(raw_df, window_seconds=context_window)
+        df = merge_captions_by_count(raw_df, group_size=2)  # 2× context
     except Exception as e:
         st.error(f"Could not fetch captions: {e}")
         st.stop()
@@ -136,16 +111,14 @@ if st.button("Analyze Captions"):
 
     df["sentiment"] = df["polarity"].apply(label_sentiment)
 
-    # Smoothed polarity
+    # Smoothed trend
     df["rolling_polarity"] = (
         df["polarity"]
         .rolling(window=5, min_periods=1)
         .mean()
     )
 
-    # ----------------------------
-    # COLOR MAP
-    # ----------------------------
+    # Color mapping (for plots)
     def sentiment_color(p):
         if p > 0.05:
             return "green"
@@ -157,16 +130,11 @@ if st.button("Analyze Captions"):
     df["color"] = df["polarity"].apply(sentiment_color)
 
     # ----------------------------
-    # PREVIEW TABLE (COLOR)
+    # PREVIEW TABLE (NO STYLING)
     # ----------------------------
-    st.subheader("📝 Caption Blocks (Context-Aware)")
-
-    def color_rows(row):
-        return [f"color: {row.color}"] * len(row)
-
+    st.subheader("📝 Caption Preview (Merged for Context)")
     st.dataframe(
-        df[["time_min", "polarity", "sentiment", "text"]]
-        .style.apply(color_rows, axis=1),
+        df[["time_min", "polarity", "sentiment", "text"]],
         use_container_width=True
     )
 
@@ -202,7 +170,7 @@ if st.button("Analyze Captions"):
     st.pyplot(fig1)
 
     # ----------------------------
-    # DISTRIBUTION
+    # SENTIMENT DISTRIBUTION
     # ----------------------------
     st.subheader("📊 Sentiment Distribution")
 
