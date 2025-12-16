@@ -160,31 +160,32 @@ if st.button("Analyze Video"):
     pos_neg_ratio = round(pos_count / max(neg_count, 1), 2)
     avg_polarity = round(df["polarity"].mean(), 3)
     peak_intensity_time = round(df["time_min"].iloc[df["intensity"].idxmax()], 2)
-    perc_pos = round((pos_count / len(df)) * 100, 1)
-    perc_neg = round((neg_count / len(df)) * 100, 1)
-    perc_neu = round((len(df) - pos_count - neg_count) / len(df) * 100, 1)
 
     # ----------------------------
-    # DISPLAY KPIs IN BOX
+    # DISPLAY KPI CARDS
     # ----------------------------
     st.subheader("⚡ Video Sentiment KPIs")
-    st.markdown(
-        """
-        <div style="border:1px solid #ccc; padding:15px; border-radius:10px; background-color:#f9f9f9;">
-        """, unsafe_allow_html=True
-    )
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Volatility", volatility)
-    k2.metric("Pos/Neg Ratio", pos_neg_ratio)
-    k3.metric("Avg Polarity", avg_polarity)
-    k4.metric("Peak Intensity Time (min)", peak_intensity_time)
-    k5, k6, k7 = st.columns(3)
-    # k5.metric("% Positive", perc_pos)
-    # k6.metric("% Neutral", perc_neu)
-    # k7.metric("% Negative", perc_neg)
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    kpi_html = f"""
+    <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#e0f7fa; text-align:center;">
+            <h3>📊 Volatility</h3>
+            <p style="font-size:24px; margin:0;">{volatility}</p>
+        </div>
+        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#f1f8e9; text-align:center;">
+            <h3>⚖️ Pos/Neg Ratio</h3>
+            <p style="font-size:24px; margin:0;">{pos_neg_ratio}</p>
+        </div>
+        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#fff3e0; text-align:center;">
+            <h3>🧠 Avg Polarity</h3>
+            <p style="font-size:24px; margin:0;">{avg_polarity}</p>
+        </div>
+        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#fce4ec; text-align:center;">
+            <h3>⏱️ Peak Intensity Time (min)</h3>
+            <p style="font-size:24px; margin:0;">{peak_intensity_time}</p>
+        </div>
+    </div>
+    """
+    st.markdown(kpi_html, unsafe_allow_html=True)
 
     # ----------------------------
     # TABLE PREVIEW
