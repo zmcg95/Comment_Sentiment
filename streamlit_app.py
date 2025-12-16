@@ -10,18 +10,48 @@ import re
 # PAGE CONFIG
 # ----------------------------
 st.set_page_config(
-    page_title="YouTube Caption Sentiment Analyzer",
+    page_title="YouTube Caption Sentiment Timeline",
     layout="wide"
 )
 
-st.title("🎬 YouTube Caption Sentiment Timeline")
-st.write("**Sentiment analysis using ONLY video captions (no comments).**")
+st.title("🎬 YouTube Caption Sentiment Analyzer")
+st.write("Sentiment analysis using **ONLY YouTube captions** (no comments, no API key).")
 
 # ----------------------------
 # INPUT
 # ----------------------------
 video_url = st.text_input("🔗 Enter YouTube Video URL")
 
+# ----------------------------
+# TRANSCRIPT FETCH LOGIC
+# ----------------------------
+def fetch_transcript(video_id):
+    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+
+    # 1️⃣ Manual English
+    try:
+        return transcript_list.find_manually_created_transcript(['en']).fetch()
+    except:
+        pass
+
+    # 2️⃣ Auto-generated English
+    try:
+        return transcript_list.find_generated_transcript(['en']).fetch()
+    except:
+        pass
+
+    # 3️⃣ Any language → translate to English
+    for transcript in transcript_list:
+        try:
+            return transcript.translate('en').fetch()
+        except:
+            continue
+
+    raise RuntimeError("Captions exist but could not be accessed.")
+
+# ----------------------------
+# MAIN ACTION
+# ----------------------------
 if st.button("Analyze Captions"):
 
     if not video_url:
@@ -40,11 +70,14 @@ if st.button("Analyze Captions"):
     # FETCH CAPTIONS
     # ----------------------------
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-    except Exception as e:
-        st.error("Captions not available for this video.")
+        transcript = fetch_transcript(video_id)
+    except Exception:
+        st.error("Captions are not accessible for this video.")
         st.stop()
 
+    # ----------------------------
+    # BUILD DATAFRAME
+    # ----------------------------
     df = pd.DataFrame(transcript)
     df = df[["start", "duration", "text"]]
     df["time_min"] = df["start"] / 60
@@ -64,42 +97,41 @@ if st.button("Analyze Captions"):
 
     df["sentiment"] = df["polarity"].apply(label_sentiment)
 
-    # Rolling sentiment (smooth timeline)
-    df["rolling_polarity"] = df["polarity"].rolling(window=10, min_periods=1).mean()
+    # Smoothed polarity
+    df["rolling_polarity"] = df["polarity"].rolling(
+        window=10, min_periods=1
+    ).mean()
 
     # ----------------------------
-    # DATA PREVIEW
+    # PREVIEW
     # ----------------------------
-    st.subheader("📝 Caption Data Preview")
+    st.subheader("📝 Caption Preview")
     st.dataframe(df.head(30), use_container_width=True)
 
     # ----------------------------
     # VISUALS
     # ----------------------------
-    st.subheader("📈 Sentiment Visualizations")
+    st.subheader("📈 Sentiment Over Time")
 
     col1, col2 = st.columns(2)
 
-    # --- Polarity over time ---
+    # Polarity timeline
     with col1:
         fig1, ax1 = plt.subplots(figsize=(8, 4))
-        ax1.plot(df["time_min"], df["polarity"], alpha=0.5)
+        ax1.plot(df["time_min"], df["polarity"], alpha=0.4)
         ax1.plot(df["time_min"], df["rolling_polarity"], linewidth=2)
         ax1.axhline(0, linestyle="--")
 
-        ax1.set_title("Sentiment Polarity Over Video Timeline")
+        ax1.set_title("Sentiment Polarity Timeline")
         ax1.set_xlabel("Time (minutes)")
-        ax1.set_ylabel("Polarity (-1 to 1)")
+        ax1.set_ylabel("Polarity")
         st.pyplot(fig1)
 
-    # --- Sentiment distribution ---
+    # Sentiment distribution
     with col2:
         fig2, ax2 = plt.subplots(figsize=(6, 4))
-        df["sentiment"].value_counts().plot(
-            kind="bar",
-            ax=ax2
-        )
-        ax2.set_title("Sentiment Distribution (Captions)")
+        df["sentiment"].value_counts().plot(kind="bar", ax=ax2)
+        ax2.set_title("Caption Sentiment Distribution")
         ax2.set_ylabel("Count")
         st.pyplot(fig2)
 
@@ -110,7 +142,7 @@ if st.button("Analyze Captions"):
 
     fig3, ax3 = plt.subplots(figsize=(10, 4))
     ax3.hist(df["polarity"], bins=30)
-    ax3.set_title("Histogram of Caption Sentiment Polarity")
+    ax3.set_title("Histogram of Caption Polarity")
     ax3.set_xlabel("Polarity")
     ax3.set_ylabel("Frequency")
     st.pyplot(fig3)
@@ -141,10 +173,10 @@ if st.button("Analyze Captions"):
     # ----------------------------
     # DOWNLOAD
     # ----------------------------
-    st.subheader("⬇️ Download Caption Sentiment Data")
+    st.subheader("⬇️ Download Results")
 
     st.download_button(
-        label="Download CSV",
+        label="Download Caption Sentiment CSV",
         data=df.to_csv(index=False).encode(),
         file_name="caption_sentiment_timeline.csv",
         mime="text/csv"
