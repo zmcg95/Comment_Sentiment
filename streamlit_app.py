@@ -180,9 +180,9 @@ if st.button("Analyze Video"):
     k3.metric("Avg Polarity", avg_polarity)
     k4.metric("Peak Intensity Time (min)", peak_intensity_time)
     k5, k6, k7 = st.columns(3)
-    k5.metric("% Positive", perc_pos)
-    k6.metric("% Neutral", perc_neu)
-    k7.metric("% Negative", perc_neg)
+    # k5.metric("% Positive", perc_pos)
+    # k6.metric("% Neutral", perc_neu)
+    # k7.metric("% Negative", perc_neg)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
