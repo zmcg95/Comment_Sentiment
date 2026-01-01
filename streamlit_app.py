@@ -1,261 +1,135 @@
+# streamlit_trail_runner.py
 import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from textblob import TextBlob
-from youtube_transcript_api import YouTubeTranscriptApi
-from urllib.parse import urlparse, parse_qs
-import requests
+import osmnx as ox
+import networkx as nx
+import random
+import math
+import gpxpy
+import gpxpy.gpx
 
-# ----------------------------
-# PAGE CONFIG
-# ----------------------------
-st.set_page_config(
-    page_title="YouTube Caption Sentiment Timeline",
-    layout="wide"
-)
+# -----------------------------
+# 1️⃣ Helper: nearest node manually
+# -----------------------------
+def nearest_node_manual(G, lat, lon):
+    min_dist = float('inf')
+    nearest = None
+    for node, data in G.nodes(data=True):
+        node_lat = data['y']
+        node_lon = data['x']
+        # Haversine distance in meters
+        R = 6371000
+        phi1 = math.radians(lat)
+        phi2 = math.radians(node_lat)
+        delta_phi = math.radians(node_lat - lat)
+        delta_lambda = math.radians(node_lon - lon)
+        a = math.sin(delta_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(delta_lambda/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        d = R * c
+        if d < min_dist:
+            min_dist = d
+            nearest = node
+    return nearest
 
-st.title("🎬 YouTube Caption Sentiment Analyzer")
-st.write(
-    "Sentiment Analysis.\n\n"
-)
+# -----------------------------
+# 2️⃣ Helper: generate routes
+# -----------------------------
+def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
+    routes = []
+    attempts = 0
+    max_attempts = 1000
+    nodes_list = list(G.nodes)
 
-# ----------------------------
-# HELPERS
-# ----------------------------
-def get_video_id(url):
-    parsed = urlparse(url)
-    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
-        if "v" in parse_qs(parsed.query):
-            return parse_qs(parsed.query)["v"][0]
-    if parsed.hostname == "youtu.be":
-        return parsed.path[1:]
-    raise ValueError("Invalid YouTube URL")
+    while len(routes) < k and attempts < max_attempts:
+        attempts += 1
+        mid_node = random.choice(nodes_list)
 
-def get_raw_captions(url):
-    video_id = get_video_id(url)
-    api = YouTubeTranscriptApi()
-    transcript = api.fetch(video_id)
-    rows = []
-    for entry in transcript:
-        rows.append({
-            "start": entry.start,
-            "duration": entry.duration,
-            "text": entry.text
-        })
-    return pd.DataFrame(rows)
+        try:
+            path1 = nx.shortest_path(G, start, mid_node, weight='length')
+            path2 = nx.shortest_path(G, mid_node, end, weight='length')
+            route = path1 + path2[1:]
 
-def merge_captions_by_count(df, group_size=2):
-    merged = []
-    for i in range(0, len(df), group_size):
-        chunk = df.iloc[i:i + group_size]
-        merged.append({
-            "start": chunk.iloc[0]["start"],
-            "text": " ".join(chunk["text"].tolist())
-        })
-    return pd.DataFrame(merged)
+            length = sum(G[u][v][0]['length'] for u, v in zip(route[:-1], route[1:]))
 
-def get_video_metadata(video_url, api_key):
-    video_id = get_video_id(video_url)
-    url = "https://www.googleapis.com/youtube/v3/videos"
-    params = {"part": "snippet,statistics", "id": video_id, "key": api_key}
-    resp = requests.get(url, params=params).json()
-    if "items" not in resp or len(resp["items"]) == 0:
-        return None
-    snippet = resp["items"][0]["snippet"]
-    stats = resp["items"][0]["statistics"]
-    return {
-        "title": snippet.get("title", "Unknown Title"),
-        "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-        "views": int(stats.get("viewCount", 0)),
-        "likes": int(stats.get("likeCount", 0)),
-        "comments": int(stats.get("commentCount", 0)),
-        "dislikes": int(stats.get("dislikeCount", 0)) if "dislikeCount" in stats else "N/A"
-    }
+            if abs(length - target_distance) <= tolerance:
+                if route not in routes:
+                    routes.append(route)
+        except (nx.NetworkXNoPath, KeyError):
+            continue
 
-# ----------------------------
-# INPUTS
-# ----------------------------
-col_key, col_url = st.columns([1, 3])
-api_key = col_key.text_input("🔑 YouTube API Key", type="password")
-video_url = col_url.text_input("🔗 YouTube Video URL")
+    return routes
 
-if st.button("Analyze Video"):
+# -----------------------------
+# 3️⃣ Helper: export GPX
+# -----------------------------
+def route_to_gpx(G, route):
+    gpx = gpxpy.gpx.GPX()
+    gpx_track = gpxpy.gpx.GPXTrack()
+    gpx.tracks.append(gpx_track)
+    gpx_segment = gpxpy.gpx.GPXTrackSegment()
+    gpx_track.segments.append(gpx_segment)
 
-    if not video_url:
-        st.error("Please enter a YouTube video URL.")
-        st.stop()
-    if not api_key:
-        st.error("Please enter your YouTube API key.")
-        st.stop()
+    for node in route:
+        data = G.nodes[node]
+        gpx_segment.points.append(gpxpy.gpx.GPXTrackPoint(data['y'], data['x']))
 
-    # ----------------------------
-    # FETCH VIDEO METADATA
-    # ----------------------------
-    try:
-        meta = get_video_metadata(video_url, api_key)
-        if not meta:
-            st.error("Could not fetch video metadata. Check API key or video URL.")
-            st.stop()
-    except Exception as e:
-        st.error(f"Error fetching metadata: {e}")
-        st.stop()
+    return gpx.to_xml()
 
-    # Display video info at top
-    st.subheader("🎥 Video Overview")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.image(meta["thumbnail"], use_column_width=True)
-    with col2:
-        st.markdown(f"### {meta['title']}")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("👁️ Views", f"{meta['views']:,}")
-        m2.metric("👍 Likes", f"{meta['likes']:,}")
-        m3.metric("💬 Comments", f"{meta['comments']:,}")
-        m4.metric("👎 Dislikes", meta['dislikes'])
+# -----------------------------
+# Streamlit App
+# -----------------------------
+st.title("Trail Runner Route Generator")
+st.write("Generate 3 trail routes and download as GPX for your watch.")
 
-    # ----------------------------
-    # FETCH AND MERGE CAPTIONS
-    # ----------------------------
-    try:
-        raw_df = get_raw_captions(video_url)
-        df = merge_captions_by_count(raw_df, group_size=2)
-    except Exception as e:
-        st.error(f"Could not fetch captions: {e}")
-        st.stop()
+# Input parameters
+place = st.text_input("Place / City", "Castricum, Netherlands")
+start_lat = st.number_input("Start Latitude", value=52.547314)
+start_lon = st.number_input("Start Longitude", value=4.646000)
+end_lat = st.number_input("End Latitude", value=52.543043)
+end_lon = st.number_input("End Longitude", value=4.631985)
+target_distance = st.number_input("Target Distance (meters)", value=3000)
+tolerance = st.number_input("Distance Tolerance (meters)", value=300)
 
-    if df.empty:
-        st.error("No captions found.")
-        st.stop()
+generate_button = st.button("Generate Routes")
 
-    # ----------------------------
-    # SENTIMENT ANALYSIS
-    # ----------------------------
-    df["time_min"] = df["start"] / 60
-    df["polarity"] = df["text"].apply(lambda x: TextBlob(x).sentiment.polarity)
-    df["intensity"] = df["polarity"].abs()
+if generate_button:
+    with st.spinner("Loading trail network..."):
+        G = ox.graph_from_place(place, network_type="walk")
+        G = G.to_undirected()
 
-    def label_sentiment(p):
-        if p > 0.05:
-            return "Positive"
-        elif p < -0.05:
-            return "Negative"
-        else:
-            return "Neutral"
+        # Largest connected component
+        largest_cc_nodes = max(nx.connected_components(G), key=len)
+        G = G.subgraph(largest_cc_nodes).copy()
 
-    df["sentiment"] = df["polarity"].apply(label_sentiment)
-    df["rolling_polarity"] = df["polarity"].rolling(window=5, min_periods=1).mean()
-    df["color"] = df["polarity"].apply(lambda p: "green" if p > 0.05 else ("red" if p < -0.05 else "gray"))
-    df["polarity_diff"] = df["polarity"].diff().abs()
+        # Filter trails
+        trail_nodes = set()
+        for u, v, k, d in G.edges(keys=True, data=True):
+            if d.get("highway") in ["footway", "path", "track"]:
+                trail_nodes.add(u)
+                trail_nodes.add(v)
+        G = G.subgraph(trail_nodes).copy()
 
-    # ----------------------------
-    # KPI CALCULATIONS
-    # ----------------------------
-    volatility = round(df["polarity_diff"].mean(), 3)
-    pos_count = (df["sentiment"] == "Positive").sum()
-    neg_count = (df["sentiment"] == "Negative").sum()
-    pos_neg_ratio = round(pos_count / max(neg_count, 1), 2)
-    avg_polarity = round(df["polarity"].mean(), 3)
-    peak_intensity_time = round(df["time_min"].iloc[df["intensity"].idxmax()], 2)
+        # Snap start/end nodes manually
+        start_node = nearest_node_manual(G, start_lat, start_lon)
+        end_node = nearest_node_manual(G, end_lat, end_lon)
 
-    # ----------------------------
-    # DISPLAY KPI CARDS
-    # ----------------------------
-    st.subheader("⚡ Video Sentiment KPIs")
-    kpi_html = f"""
-    <div style="display: flex; gap: 20px; margin-bottom: 20px;">
-        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#e0f7fa; text-align:center;">
-            <h3>📊 Volatility</h3>
-            <p style="font-size:24px; margin:0;">{volatility}</p>
-        </div>
-        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#f1f8e9; text-align:center;">
-            <h3>⚖️ Pos/Neg Ratio</h3>
-            <p style="font-size:24px; margin:0;">{pos_neg_ratio}</p>
-        </div>
-        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#fff3e0; text-align:center;">
-            <h3>🧠 Avg Polarity</h3>
-            <p style="font-size:24px; margin:0;">{avg_polarity}</p>
-        </div>
-        <div style="flex: 1; border:1px solid #ccc; padding:20px; border-radius:12px; background-color:#fce4ec; text-align:center;">
-            <h3>⏱️ Peak Intensity Time (min)</h3>
-            <p style="font-size:24px; margin:0;">{peak_intensity_time}</p>
-        </div>
-    </div>
-    """
-    st.markdown(kpi_html, unsafe_allow_html=True)
+        # Generate routes
+        routes = generate_alternative_routes(G, start_node, end_node, target_distance, tolerance, k=3)
 
-    # ----------------------------
-    # TABLE PREVIEW
-    # ----------------------------
-    st.subheader("📝 Caption Preview")
-    st.dataframe(df[["time_min", "polarity", "sentiment", "text"]], use_container_width=True)
+    if not routes:
+        st.warning("No routes found. Try increasing tolerance or adjusting start/end points.")
+    else:
+        st.success(f"{len(routes)} routes generated!")
+        for i, r in enumerate(routes):
+            length = sum(G[u][v][0]['length'] for u, v in zip(r[:-1], r[1:]))
+            st.write(f"Route {i+1}: {length/1000:.2f} km")
+            fig, ax = ox.plot_graph_route(G, r, show=False, close=False)
+            st.pyplot(fig)
 
-    # ----------------------------
-    # SIDE-BY-SIDE CHARTS
-    # ----------------------------
-    st.subheader("📈 Sentiment Overview")
-    col1, col2 = st.columns(2)
-    with col1:
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
-        ax1.scatter(df["time_min"], df["polarity"], c=df["color"], alpha=0.6)
-        ax1.plot(df["time_min"], df["rolling_polarity"], color="black", linewidth=2, label="Smoothed Sentiment")
-        ax1.axhline(0, linestyle="--", color="black", alpha=0.5)
-        ax1.set_title("Sentiment Over Video Timeline")
-        ax1.set_xlabel("Time (minutes)")
-        ax1.set_ylabel("Polarity")
-        ax1.legend()
-        st.pyplot(fig1)
-
-    with col2:
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-        df["sentiment"].value_counts().reindex(["Positive", "Neutral", "Negative"]).plot(
-            kind="bar", ax=ax2, color=["green", "gray", "red"]
-        )
-        ax2.set_title("Sentiment Distribution")
-        ax2.set_ylabel("Count")
-        st.pyplot(fig2)
-
-    # ----------------------------
-    # INTENSITY & HEATMAP
-    # ----------------------------
-    st.subheader("🔥 Sentiment Intensity & Heatmap")
-    colA, colB = st.columns(2)
-    with colA:
-        fig3, ax3 = plt.subplots(figsize=(6, 4))
-        ax3.plot(df["time_min"], df["intensity"], color="purple", linewidth=2)
-        ax3.set_title("Sentiment Intensity Over Time")
-        ax3.set_xlabel("Time (minutes)")
-        ax3.set_ylabel("Intensity (|Polarity|)")
-        st.pyplot(fig3)
-    with colB:
-        fig4, ax4 = plt.subplots(figsize=(6, 4))
-        heatmap = df["polarity"].values[np.newaxis, :]
-        c = ax4.imshow(heatmap, aspect="auto", cmap="RdYlGn", vmin=-1, vmax=1)
-        ax4.set_title("Sentiment Heatmap")
-        ax4.set_xlabel("Time Index")
-        ax4.set_yticks([])
-        fig4.colorbar(c, ax=ax4, orientation='vertical', label="Polarity")
-        st.pyplot(fig4)
-
-    # ----------------------------
-    # STRONGEST MOMENTS
-    # ----------------------------
-    st.subheader("🏆 Strongest Emotional Moments")
-    colC, colD = st.columns(2)
-    with colC:
-        st.write("### 🌟 Most Positive Moments")
-        st.table(df.sort_values("polarity", ascending=False).head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
-    with colD:
-        st.write("### 💀 Most Negative Moments")
-        st.table(df.sort_values("polarity").head(8)[["time_min", "polarity", "text"]].reset_index(drop=True))
-
-    # ----------------------------
-    # DOWNLOAD CSV
-    # ----------------------------
-    st.subheader("⬇️ Download Results")
-    st.download_button(
-        "Download Caption Sentiment CSV",
-        data=df.to_csv(index=False).encode(),
-        file_name="caption_sentiment_contextual.csv",
-        mime="text/csv"
-    )
+            # GPX download
+            gpx_data = route_to_gpx(G, r)
+            st.download_button(
+                label=f"Download Route {i+1} as GPX",
+                data=gpx_data,
+                file_name=f"route_{i+1}.gpx",
+                mime="application/gpx+xml"
+            )
