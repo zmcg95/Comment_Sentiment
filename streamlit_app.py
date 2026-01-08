@@ -156,12 +156,8 @@ if st.button("Generate Routes"):
             else:
                 end_lat, end_lon = st.session_state.clicks[1]
 
-            start_node = ox.distance.nearest_nodes(
-                G, start_lon, start_lat, method="haversine"
-            )
-            end_node = ox.distance.nearest_nodes(
-                G, end_lon, end_lat, method="haversine"
-            )
+            start_node = nearest_node_manual(G, start_lat, start_lon)
+            end_node = nearest_node_manual(G, end_lat, end_lon)
 
             routes = generate_alternative_routes(
                 G,
