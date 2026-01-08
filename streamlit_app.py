@@ -8,7 +8,7 @@ import folium
 from streamlit_folium import st_folium
 
 # -----------------------------
-# Page polish (padding)
+# Page styling
 # -----------------------------
 st.markdown(
     """
@@ -29,7 +29,7 @@ if "clicks" not in st.session_state:
     st.session_state.clicks = []
 
 # -----------------------------
-# Helper: manual nearest node
+# Helper: nearest node (manual, cloud-safe)
 # -----------------------------
 def nearest_node_manual(G, lat, lon):
     min_dist = float("inf")
@@ -59,7 +59,7 @@ def nearest_node_manual(G, lat, lon):
     return nearest
 
 # -----------------------------
-# Helper: fast route generation
+# Helper: route generation
 # -----------------------------
 def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
     routes = []
@@ -78,7 +78,6 @@ def generate_alternative_routes(G, start, end, target_distance, tolerance, k=3):
             )
 
             total = dist1 + dist2
-
             if abs(total - target_distance) <= tolerance:
                 routes.append(paths[mid_node] + path2[1:])
                 if len(routes) >= k:
@@ -108,6 +107,32 @@ def route_to_gpx(G, route):
     return gpx.to_xml()
 
 # -----------------------------
+# Helper: Folium route map (square & zoomed)
+# -----------------------------
+def make_route_map(G, route, color):
+    coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in route]
+
+    lats = [c[0] for c in coords]
+    lons = [c[1] for c in coords]
+
+    m = folium.Map(
+        location=[sum(lats) / len(lats), sum(lons) / len(lons)],
+        tiles="OpenStreetMap"
+    )
+
+    folium.PolyLine(
+        coords,
+        color=color,
+        weight=5,
+        opacity=0.9
+    ).add_to(m)
+
+    # Fit map tightly to route bounds
+    m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+
+    return m
+
+# -----------------------------
 # Hero header
 # -----------------------------
 st.markdown(
@@ -120,8 +145,8 @@ st.markdown(
         margin-bottom:25px;
         border:1px solid #cce3dc;
     ">
-        <h1 style="margin-bottom:10px;">🏃 Trail Runner Route GPX Generator</h1>
-        <p style="font-size:16px; color:#444;">
+        <h1>🏃 Trail Runner Route GPX Generator</h1>
+        <p style="color:#444;">
             Click on the map to select your start/end point. Trails load automatically.
         </p>
     </div>
@@ -140,7 +165,6 @@ route_mode = st.radio(
 target_distance = st.number_input(
     "Target Distance (meters)", value=3000, step=500
 )
-
 tolerance = st.number_input(
     "Distance Tolerance (meters)", value=300, step=100
 )
@@ -149,7 +173,7 @@ if st.button("Reset map clicks"):
     st.session_state.clicks = []
 
 # -----------------------------
-# Map
+# Click map
 # -----------------------------
 m = folium.Map(location=[52, 5], zoom_start=6)
 
@@ -171,7 +195,7 @@ if map_data and map_data.get("last_clicked"):
         st.session_state.clicks.append((lat, lon))
 
 # -----------------------------
-# Generate Routes
+# Generate routes
 # -----------------------------
 if st.button("Generate Routes"):
     needed = 1 if route_mode.startswith("Loop") else 2
@@ -209,11 +233,13 @@ if st.button("Generate Routes"):
         )
 
     if not routes:
-        st.warning("No routes found. Try adjusting distance or tolerance.")
+        st.warning("No routes found.")
     else:
         st.success(f"{len(routes)} routes generated!")
 
+        colors = ["#2ecc71", "#3498db", "#e67e22"]
         cols = st.columns(len(routes))
+
         for i, (col, r) in enumerate(zip(cols, routes)):
             with col:
                 length = sum(
@@ -229,18 +255,17 @@ if st.button("Generate Routes"):
                         padding:10px;
                         text-align:center;
                         background-color:#fafafa;
+                        margin-bottom:8px;
                     ">
-                        <h4>Route {i+1}</h4>
-                        <p>{length/1000:.2f} km</p>
+                        <strong>Route {i+1}</strong><br/>
+                        {length/1000:.2f} km
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
-                fig, ax = ox.plot_graph_route(
-                    G, r, show=False, close=False, figsize=(4, 4)
-                )
-                st.pyplot(fig)
+                route_map = make_route_map(G, r, colors[i % len(colors)])
+                st_folium(route_map, height=300, width=300)
 
                 st.download_button(
                     "⬇️ Download GPX",
